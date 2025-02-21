@@ -1,0 +1,232 @@
+#library "ANNSIDESCROLLER"
+#include "zcommon.acs"
+
+// Constants - Scaled down to prevent overflow
+#define FIXED_POINT_SCALE 0.03125 // 1/16 = 0.0625; 1/32 = 0.03125;
+#define SUBPIXELS_PER_PIXEL 256
+#define X_ACCEL 16.0
+#define X_MAX_SPEED 768.0 // 3 pixels
+#define X_MAX_SPEED_FORCE_DECEL 32.0
+#define Y_ACCEL_JUMP_HELD 40.0
+#define Y_ACCEL_NORMAL 160.0
+#define Y_TERMINAL_VELOCITY 1024.0
+#define INITIAL_JUMP_SPEED 1184.0
+#define GROUND_POUND_SPEED 2048.0
+
+// Global variables
+int xSpeed = 0;
+int ySpeed = 0;
+int isGrounded = 0;
+int isGroundPounding = 0;
+int groundPoundTimer = 0;
+int jumpReleased = 1;
+
+int actualVerticalMovementDistance = 0.0;
+
+str strDebug = "";
+bool shouldDrawDebugText = 1;
+
+function int abs (int x)
+{
+    if (x < 0)
+        return -x;
+    return x;
+}
+
+function void drawDebugText(void)
+{
+	if (shouldDrawDebugText) 
+	{
+		//strDebug = StrParam(s:"Accelerating: Dir=", i:moveDir, s:" Speed=", f:xSpeed);
+		HudMessage(s:strDebug; HUDMSG_FADEOUT, 900, CR_YELLOW, -0.25, -0.25, 1.0, 1.0);
+		strDebug = "";                                                                                                                                                                                                                                     
+	}
+}
+
+function str AddDebugTextLine(str strIn)
+{
+	strDebug = StrParam(s:strDebug, s:strIn, s:"\n");
+	return strDebug;
+}
+
+script 1 ENTER
+{
+    print(s:"Movement system initialized");
+    ChangeCamera(300, -1, 0);
+    ACS_NamedExecute("platformerMainLoop", 0);
+}
+
+script "platformerMainLoop" (void)
+{
+    print(s:"Started movement loop");
+    while(1)
+    {
+        // Get input
+        int buttons = GetPlayerInput(-1, INPUT_BUTTONS);
+        int strafeAxis = GetPlayerInput(-1, INPUT_SIDEMOVE);
+        
+        // Debug print input
+        if (abs(strafeAxis) > 1000)
+        {
+            //print(s:"Moving: ", i:strafeAxis);
+			AddDebugTextLine(StrParam(s:"Moving: ", i:strafeAxis));
+			
+        }
+
+        // Horizontal movement
+        if (abs(strafeAxis) > 1000 && !isGroundPounding)
+        {
+            // Apply acceleration in movement direction
+            int moveDir = strafeAxis > 0 ? 1 : -1;
+            xSpeed += moveDir * X_ACCEL;  // FixedPoint times Int results in a Float. Don't use FixedMul for this.
+            
+            // Debug acceleration
+            //print(s:"Accelerating: Dir=", i:moveDir, s:" Speed=", f:xSpeed);
+			AddDebugTextLine(StrParam(s:"Accelerating: Dir=", i:moveDir, s:" Speed=", f:xSpeed));
+            
+            // Cap speed
+            if (abs(xSpeed) > X_MAX_SPEED)
+            {
+                xSpeed -= moveDir * X_MAX_SPEED_FORCE_DECEL;
+                ////print(s:"Speed capped at: ", f:xSpeed);
+				AddDebugTextLine(StrParam(s:"Speed capped at: ", f:xSpeed));
+            }
+        }
+        else if (!isGroundPounding)
+        {
+            // Decelerate when no movement input
+            xSpeed = FixedMul(xSpeed, 0.8);
+        }
+		
+		// Vertical movement.
+		        // Jumping
+        // if ((buttons & BT_JUMP) && isGrounded && jumpReleased)
+		if ((buttons & BT_JUMP) && isGrounded && jumpReleased)
+        {
+            ySpeed = INITIAL_JUMP_SPEED;
+            isGrounded = 0;
+            jumpReleased = 0;
+        }
+        else if (!(buttons & BT_JUMP))
+        {
+            jumpReleased = 1;
+            if (ySpeed > 0)  // Cut jump height when button released
+            {
+                ySpeed = 0;
+            }
+        }
+
+        // Ground pound (Use button in this example)
+        if ((buttons & BT_USE) && !isGrounded && !isGroundPounding)
+        {
+            isGroundPounding = 1;
+            groundPoundTimer = 23;  // 23 frame windup
+            xSpeed = 0;
+        }
+
+        // Ground pound physics
+        if (isGroundPounding)
+        {
+            if (groundPoundTimer > 0)
+            {
+                groundPoundTimer--;
+                if (groundPoundTimer == 0)
+                {
+                    ySpeed = -GROUND_POUND_SPEED;
+                }
+            }
+        }
+
+        // Apply gravity if not grounded
+        if (!isGrounded)
+        {
+            int gravityAccel = (buttons & BT_JUMP) && !isGroundPounding ? 
+                              Y_ACCEL_JUMP_HELD : Y_ACCEL_NORMAL;
+            ySpeed -= gravityAccel;
+
+            // Cap fall speed
+            if (ySpeed < -Y_TERMINAL_VELOCITY)
+            {
+                ySpeed = -Y_TERMINAL_VELOCITY;
+            }
+        }
+        
+        // Move actor
+        int moveMe = 300;
+        int moveMeToo = 301;
+        
+        /*
+		SetActorVelocity(moveMe, 
+            xSpeed * 100.0
+            0,
+            ySpeed,
+            0,0);
+		*/
+			
+		/*
+		SetActorPosition(moveMe, 
+            GetActorX(moveMe) + FixedMul(xSpeed, FIXED_POINT_SCALE*2),
+            GetActorY(moveMe),
+            GetActorZ(moveMe) + FixedMul(ySpeed, FIXED_POINT_SCALE),
+            0);
+			*/
+			
+		SetActorVelocity(moveMe, 
+            0,
+            0,
+            0,
+            0,0);
+			
+		int mmaz = GetActorZ(moveMe);
+		int mmafz = GetActorFloorZ(moveMe);
+			
+		actualVerticalMovementDistance = FixedMul(ySpeed, FixedMul(FIXED_POINT_SCALE,0.125));
+		
+		// Don't trust the game to handle floor zipping/collision well.
+		if (mmaz + actualVerticalMovementDistance <= mmafz) 
+		{
+			actualVerticalMovementDistance = mmafz - mmaz;
+			AddDebugTextLine(StrParam(s:"floor HIT"));
+		}
+			
+		// Apply Vertical Movement
+		SetActorPosition(moveMe, 
+            GetActorX(moveMe),
+            GetActorY(moveMe),
+            GetActorZ(moveMe) + actualVerticalMovementDistance,
+            0);
+			
+		// Apply Horizontal Movement
+		SetActorPosition(moveMe, 
+            GetActorX(moveMe) + FixedMul(xSpeed, FixedMul(FIXED_POINT_SCALE,0.25)),
+            GetActorY(moveMe),
+            GetActorZ(moveMe),
+            0);
+            
+        SetActorPosition(moveMeToo, 
+            GetActorX(moveMe),
+            GetActorY(moveMe) + 64.0,
+            GetActorFloorZ(moveMe),
+            0);
+            
+        // Ground check
+        if (GetActorZ(moveMe) <= GetActorFloorZ(moveMe))
+        {
+            isGrounded = 1;
+            ySpeed = 0;
+            isGroundPounding = 0;
+        }
+		AddDebugTextLine(StrParam(s:"xSpeed: ", f:xSpeed));
+		AddDebugTextLine(StrParam(s:"ySpeed: ", f:ySpeed));
+		AddDebugTextLine(StrParam(s:"isGrounded: ", b:isGrounded));
+		AddDebugTextLine(StrParam(s:"isGroundPounding: ", b:isGroundPounding));
+		AddDebugTextLine(StrParam(s:"jumpReleased: ", b:jumpReleased));		
+		AddDebugTextLine(StrParam(s:"x: ", f:GetActorX(moveMe)));
+		AddDebugTextLine(StrParam(s:"y: ", f:GetActorY(moveMe)));
+		AddDebugTextLine(StrParam(s:"GetActorZ: ", f:GetActorZ(moveMe)));
+		AddDebugTextLine(StrParam(s:"GetActorFloorZ: ", f:GetActorFloorZ(moveMe)));
+        
+		drawDebugText();
+        Delay(1);
+    }
+}
