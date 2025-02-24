@@ -21,10 +21,24 @@ int isGroundPounding = 0;
 int groundPoundTimer = 0;
 int jumpReleased = 1;
 
+int axisDeadzone = 1000;
+
+bool inputTiltUp = 0;
+bool inputTiltDown = 0;
+
+int attackHeld = 0;
+bool attackJustPressed = 0;
+bool attackJustReleased = 0;
+
+int playerTids[32] = {1000,};
+
 int actualVerticalMovementDistance = 0.0;
 
 str strDebug = "";
 bool shouldDrawDebugText = 1;
+
+int attackState = 0;
+int attackPhaseTimer = 0;
 
 function int abs (int x)
 {
@@ -49,8 +63,49 @@ function str AddDebugTextLine(str strIn)
 	return strDebug;
 }
 
+
+function void PerformAttackUp(void)
+{
+	attackState = 1;
+	attackPhaseTimer = 20;
+}
+
+function void PerformAttackDown(void)
+{
+	attackState = 2;
+	attackPhaseTimer = 20;
+}
+
+function void PerformAttackNeutral(void)
+{
+	attackState = 3;
+	attackPhaseTimer = 20;
+}
+
+function void PerformAttackAirUp(void)
+{
+	attackState = 4;
+	attackPhaseTimer = 20;
+}
+
+function void PerformAttackAirDown(void)
+{
+	attackState = 5;
+	attackPhaseTimer = 20;
+}
+
+function void PerformAttackAirNeutral(void)
+{
+	attackState = 6;
+	attackPhaseTimer = 20;
+}
+
 script 1 ENTER
 {
+	int newTid = 1000*PlayerNumber();
+	Thing_ChangeTID(0, newTid);
+	print(s:"New Player TID set to: ", i:newTid);
+	log(s:"New Player TID set to: ", i:newTid);
     print(s:"Movement system initialized");
     ChangeCamera(300, -1, 0);
     ACS_NamedExecute("platformerMainLoop", 0);
@@ -64,9 +119,98 @@ script "platformerMainLoop" (void)
         // Get input
         int buttons = GetPlayerInput(-1, INPUT_BUTTONS);
         int strafeAxis = GetPlayerInput(-1, INPUT_SIDEMOVE);
+		int forwardAxis = GetPlayerInput(-1, INPUT_FORWARDMOVE);
+		
+		// Debug print input
+		inputTiltUp = 0;
+		inputTiltDown = 0;
+        if (abs(forwardAxis) > axisDeadzone)
+        {
+            //print(s:"Moving: ", i:strafeAxis);
+			AddDebugTextLine(StrParam(s:"Tilting: ", i:strafeAxis));
+			if (forwardAxis > axisDeadzone || (buttons & BT_FORWARD)) 
+			{
+				inputTiltUp = 1;
+			}
+			else if (forwardAxis < -axisDeadzone || (buttons & BT_BACK)) 
+			{
+				inputTiltDown = 1;
+			}			
+        }
+		
+		AddDebugTextLine(StrParam(s:"inputTiltUp: ", b:inputTiltUp));
+		AddDebugTextLine(StrParam(s:"inputTiltDown: ", b:inputTiltDown));
+		
+		attackJustPressed = 0;
+		attackJustReleased = 0;
+		
+		if (buttons & BT_ATTACK) 
+		{
+			if (attackHeld == 0) {attackJustPressed = 1;}
+			attackHeld++;
+		}
+		else 
+		{
+			if (attackHeld > 0) {attackJustReleased = 1;}
+			attackHeld = 0;
+		}
+		
+		// Grounded attacks
+		if (isGrounded) 
+		{
+			if (attackJustPressed && inputTiltUp && isGrounded) 
+			{
+				PerformAttackUp();
+			}
+			else if (attackJustPressed && inputTiltDown) 
+			{
+				PerformAttackDown();
+			}
+			else if (attackJustPressed) 
+			{
+				PerformAttackNeutral();
+			}
+		}
+		
+		// Air Attacks
+		if (!isGrounded)
+		{
+			if (attackJustPressed && inputTiltUp) 
+			{
+				PerformAttackAirUp();
+			}
+			else if (attackJustPressed && inputTiltDown) 
+			{
+				PerformAttackAirDown();
+			}
+			else if (attackJustPressed) 
+			{
+				PerformAttackAirNeutral();
+			}
+		}
+		
+		
+		if (attackPhaseTimer > 0)
+		{
+			attackPhaseTimer--;
+			AddDebugTextLine(StrParam(s:"AttackState / Attack Phase Time: ", i:attackState, s:" / ", i:attackPhaseTimer));
+		}
+		
+		if (attackPhaseTimer == 0 && attackState > 0) 
+		{
+			if (attackState != 10) 
+			{
+				attackState = 10;
+				attackPhaseTimer = 6;
+			}
+			else 
+			{
+				attackState = 0;
+			}
+		}
         
         // Debug print input
-        if (abs(strafeAxis) > 1000)
+        if (abs(strafeAxis) > axisDeadzone || (buttons & BT_MOVERIGHT))
         {
             //print(s:"Moving: ", i:strafeAxis);
 			AddDebugTextLine(StrParam(s:"Moving: ", i:strafeAxis));
@@ -74,7 +218,7 @@ script "platformerMainLoop" (void)
         }
 
         // Horizontal movement
-        if (abs(strafeAxis) > 1000 && !isGroundPounding)
+        if ((abs(strafeAxis) > axisDeadzone || (buttons & BT_FORWARD)) && !isGroundPounding)
         {
             // Apply acceleration in movement direction
             int moveDir = strafeAxis > 0 ? 1 : -1;
@@ -106,6 +250,8 @@ script "platformerMainLoop" (void)
             ySpeed = INITIAL_JUMP_SPEED;
             isGrounded = 0;
             jumpReleased = 0;
+			
+			// TODO: Alternate Jump actions based on tilt?
         }
         else if (!(buttons & BT_JUMP))
         {
