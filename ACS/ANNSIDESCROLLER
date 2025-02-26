@@ -40,6 +40,16 @@ bool shouldDrawDebugText = 1;
 int attackState = 0;
 int attackPhaseTimer = 0;
 
+int ticks = 0;
+
+// TIDS
+
+int moveMe = 300;
+int moveMeToo = 301;
+int moveMeCamera = 302;
+
+bool viewingCamera = 1;
+
 function int abs (int x)
 {
     if (x < 0)
@@ -107,13 +117,14 @@ script 1 ENTER
 	print(s:"New Player TID set to: ", i:newTid);
 	log(s:"New Player TID set to: ", i:newTid);
     print(s:"Movement system initialized");
-    ChangeCamera(300, -1, 0);
+    ChangeCamera(moveMeCamera, 0, 0);
     ACS_NamedExecute("platformerMainLoop", 0);
 }
 
 script "platformerMainLoop" (void)
 {
     print(s:"Started movement loop");
+	// SetGravity(0.0);
     while(1)
     {
         // Get input
@@ -268,6 +279,17 @@ script "platformerMainLoop" (void)
             isGroundPounding = 1;
             groundPoundTimer = 23;  // 23 frame windup
             xSpeed = 0;
+			
+			//This bit is for testing:
+			if (viewingCamera) 
+			{
+				ChangeCamera(0, -1, 0);
+			}
+			else 
+			{
+				ChangeCamera(moveMeCamera, -1, 0);
+			}
+			viewingCamera = !viewingCamera;
         }
 
         // Ground pound physics
@@ -298,8 +320,11 @@ script "platformerMainLoop" (void)
         }
         
         // Move actor
-        int moveMe = 300;
-        int moveMeToo = 301;
+        
+		
+		SetActorProperty(moveMe, APROP_GRAVITY, 0);
+		SetActorProperty(moveMeToo, APROP_GRAVITY, 0);
+		SetActorProperty(moveMeCamera, APROP_GRAVITY, 0);
         
         /*
 		SetActorVelocity(moveMe, 
@@ -354,6 +379,16 @@ script "platformerMainLoop" (void)
             GetActorY(moveMe) + 64.0,
             GetActorFloorZ(moveMe),
             0);
+		
+		
+		SetActorPosition(moveMeCamera, 
+            GetActorX(moveMe),
+            GetActorY(moveMe) - 16.0,
+            GetActorZ(moveMe) + 256.0,
+            0);
+			
+			
+		SetActorPitch(moveMeCamera, 0.25);
             
         // Ground check
         if (GetActorZ(moveMe) <= GetActorFloorZ(moveMe))
@@ -371,8 +406,39 @@ script "platformerMainLoop" (void)
 		AddDebugTextLine(StrParam(s:"y: ", f:GetActorY(moveMe)));
 		AddDebugTextLine(StrParam(s:"GetActorZ: ", f:GetActorZ(moveMe)));
 		AddDebugTextLine(StrParam(s:"GetActorFloorZ: ", f:GetActorFloorZ(moveMe)));
+		
+		
+		// This test snippet was created to figure out how to look up and down
+		// Mostly to use the floor as the "background",
+		/*
+		int tempAngle = FixedDiv(1.0, 150.0);
+		int normalizedRotationProgress = ticks % 150;
+		tempAngle *= normalizedRotationProgress;
+		
+		SetActorPitch(moveMeCamera, tempAngle);
+		
+		AddDebugTextLine(StrParam(s:"tempAngle: ", f:tempAngle));
+		AddDebugTextLine(StrParam(s:"ticks: ", i:ticks));
+		AddDebugTextLine(StrParam(s:"normalizedRotationProgress: ", i:normalizedRotationProgress));
+		
+		AddDebugTextLine(StrParam(s:"actualPitch: ", f:GetActorPitch(moveMeCamera)));
+		*/
+		
+		
+		
         
 		drawDebugText();
+		ticks++;
         Delay(1);
     }
 }
+
+
+
+
+/*
+Useful stuff: 
+
+https://zdoom.org/wiki/CheckPlayerCamera
+
+*/
