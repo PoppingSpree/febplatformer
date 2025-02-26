@@ -21,6 +21,9 @@ int isGroundPounding = 0;
 int groundPoundTimer = 0;
 int jumpReleased = 1;
 
+int lastY = 0;
+int yStuckTimer = 0;
+
 int axisDeadzone = 1000;
 
 bool inputTiltUp = 0;
@@ -47,6 +50,7 @@ int ticks = 0;
 int moveMe = 300;
 int moveMeToo = 301;
 int moveMeCamera = 302;
+int moveMeFloorSensor = 303;
 
 bool viewingCamera = 1;
 
@@ -55,6 +59,49 @@ function int abs (int x)
     if (x < 0)
         return -x;
     return x;
+}
+
+// Function to find distance to nearest "floor" (south wall in sidescroller)
+function int FindFloorDistance(int actorTID, int sensorTID, int maxDist) {
+    int actorX = GetActorX(actorTID);
+    int actorY = GetActorY(actorTID);
+    int actorZ = GetActorZ(actorTID);
+    
+    // Store direction (positive or negative)
+    int direction = maxDist > 0 ? 1 : -1;
+    
+    // Use absolute values for calculations
+    int absMaxDist = abs(maxDist);
+    int floorDist = absMaxDist;
+    int testDist = absMaxDist;
+    int foundFloor = 0;
+    
+    // Binary search for the floor position
+    while (testDist >= 1.0) {
+        // Apply direction to test position
+        if (!SetActorPosition(sensorTID, actorX, actorY + (floorDist * direction), actorZ, false)) {
+            // Position is invalid, there's a wall here
+            // Try a shorter distance
+            floorDist -= testDist;
+        } else {
+            // Position is valid, try further
+            foundFloor = 1;
+            floorDist += testDist;
+            if (floorDist > absMaxDist) {
+                floorDist = absMaxDist;
+                break;
+            }
+        }
+        testDist /= 2;
+    }
+    
+    if (!foundFloor) {
+        // Return 0 or some other value to indicate no floor found
+        return 0;
+    }
+    
+    // Return with proper direction
+    return floorDist * direction;
 }
 
 function void drawDebugText(void)
@@ -253,6 +300,18 @@ script "platformerMainLoop" (void)
             xSpeed = FixedMul(xSpeed, 0.8);
         }
 		
+		int newY = GetActorY(moveMe);
+		if (lastY == newY) 
+		{
+			yStuckTimer++;
+			if (yStuckTimer > 4) {isGrounded = true;}
+		}
+		else 
+		{
+			yStuckTimer = 0;
+		}
+		lastY = newY;
+		
 		// Vertical movement.
 		        // Jumping
         // if ((buttons & BT_JUMP) && isGrounded && jumpReleased)
@@ -321,10 +380,18 @@ script "platformerMainLoop" (void)
         
         // Move actor
         
+		int lastMoveMe = moveMeFloorSensor;
+		for (int i = moveMe; i < lastMoveMe; i++) 
+		{
+			SetActorProperty(i, APROP_GRAVITY, 0);
+			// SetActorFlag(i, "SOLID", false);
+		}
 		
-		SetActorProperty(moveMe, APROP_GRAVITY, 0);
+		/*
 		SetActorProperty(moveMeToo, APROP_GRAVITY, 0);
 		SetActorProperty(moveMeCamera, APROP_GRAVITY, 0);
+		SetActorProperty(moveMeFloorSensor, APROP_GRAVITY, 0);
+		*/
         
         /*
 		SetActorVelocity(moveMe, 
@@ -351,7 +418,24 @@ script "platformerMainLoop" (void)
 		int mmaz = GetActorZ(moveMe);
 		int mmafz = GetActorFloorZ(moveMe);
 			
-		actualVerticalMovementDistance = FixedMul(ySpeed, FixedMul(FIXED_POINT_SCALE,0.125));
+		actualVerticalMovementDistance = FixedMul(ySpeed, FixedMul(FIXED_POINT_SCALE,0.25)); //old scale was 0.125
+		
+		AddDebugTextLine(StrParam(s:"Sensor Y before move: ", f:GetActorY(moveMeFloorSensor)));
+			
+		int floorDistance = FindFloorDistance(moveMe, moveMeFloorSensor, actualVerticalMovementDistance);
+		AddDebugTextLine(StrParam(s:"floorDistance: ", f:floorDistance));
+		
+		AddDebugTextLine(StrParam(s:"Sensor Y after move: ", f:GetActorY(moveMeFloorSensor)));
+		
+		if (floorDistance == 0) // Did not find a floor, but we don't want to be a fake-floor.
+		{
+			SetActorPosition(moveMeFloorSensor, 
+				GetActorX(moveMe),
+				GetActorY(moveMe) + actualVerticalMovementDistance,
+				GetActorZ(moveMe),
+				0);
+		}
+		mmafz = GetActorY(moveMeFloorSensor);
 		
 		// Don't trust the game to handle floor zipping/collision well.
 		if (mmaz + actualVerticalMovementDistance <= mmafz) 
@@ -363,13 +447,13 @@ script "platformerMainLoop" (void)
 		// Apply Vertical Movement
 		SetActorPosition(moveMe, 
             GetActorX(moveMe),
-            GetActorY(moveMe),
-            GetActorZ(moveMe) + actualVerticalMovementDistance,
+            GetActorY(moveMe) + actualVerticalMovementDistance,
+            GetActorZ(moveMe),
             0);
 			
 		// Apply Horizontal Movement
 		SetActorPosition(moveMe, 
-            GetActorX(moveMe) + FixedMul(xSpeed, FixedMul(FIXED_POINT_SCALE,0.25)),
+            GetActorX(moveMe) + FixedMul(xSpeed, FixedMul(FIXED_POINT_SCALE,0.50)),
             GetActorY(moveMe),
             GetActorZ(moveMe),
             0);
@@ -380,18 +464,42 @@ script "platformerMainLoop" (void)
             GetActorFloorZ(moveMe),
             0);
 		
+		bool didCameraMove = false;
 		
-		SetActorPosition(moveMeCamera, 
+		// Moving Camera X, Y, and Z separately to prevent being pinned via movement rejection on one axis.
+		didCameraMove = SetActorPosition(moveMeCamera, 
             GetActorX(moveMe),
-            GetActorY(moveMe) - 16.0,
-            GetActorZ(moveMe) + 256.0,
+            GetActorY(moveMe),
+            GetActorZ(moveMe) + 128.0,
             0);
+			
+		AddDebugTextLine(StrParam(s:"Did Camera Move A: ", b:didCameraMove));
+			
+		didCameraMove = SetActorPosition(moveMeCamera, 
+            GetActorX(moveMeCamera),
+            GetActorY(moveMeCamera) - 32.0,
+            GetActorZ(moveMeCamera),
+            0);
+			
+		AddDebugTextLine(StrParam(s:"Did Camera Move B: ", b:didCameraMove));
+		
+		/*
+		didCameraMove = SetActorPosition(moveMeCamera, 
+            GetActorX(moveMe),
+            GetActorY(moveMe),
+            GetActorCeilingZ(moveMe) - 100.0,
+            0);
+		*/
+			
+		AddDebugTextLine(StrParam(s:"Did Camera Move C: ", b:didCameraMove));
+		AddDebugTextLine(StrParam(s:"GetActorCeilingZ(moveMe): ", f:GetActorCeilingZ(moveMe)));
+		AddDebugTextLine(StrParam(s:"GetActorZ(moveMeCamera): ", f:GetActorZ(moveMeCamera)));
 			
 			
 		SetActorPitch(moveMeCamera, 0.25);
             
         // Ground check
-        if (GetActorZ(moveMe) <= GetActorFloorZ(moveMe))
+        if (GetActorY(moveMe) <= GetActorY(moveMeFloorSensor))
         {
             isGrounded = 1;
             ySpeed = 0;
